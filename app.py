@@ -4,6 +4,7 @@ import subprocess
 import re
 import datetime
 
+
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 DB_PATH = 'scan.db'
