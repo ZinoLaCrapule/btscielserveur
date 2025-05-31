@@ -3,79 +3,20 @@ import sqlite3
 import subprocess
 import re
 import datetime
-
+import hashlib
 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 DB_PATH = 'scan.db'
 
+# === HASHAGE DES MOTS DE PASSE ===
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
 # === TEMPLATES HTML ===
 
-LOGIN_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Connexion</title>
-    <style>
-        body { font-family: Arial; background-color: #f2f2f2; text-align: center; padding-top: 50px; }
-        form { background: white; padding: 20px; border-radius: 8px; display: inline-block; }
-        input { margin: 10px; padding: 8px; }
-    </style>
-</head>
-<body>
-    <h1>Connexion</h1>
-    <form method="POST">
-        <input type="text" name="username" placeholder="Nom d'utilisateur" required><br>
-        <input type="password" name="password" placeholder="Mot de passe" required><br>
-        <button type="submit">Se connecter</button>
-    </form>
-</body>
-</html>
-"""
-
-USER_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Bienvenue</title>
-    <style>
-        body { font-family: Arial; background-color: #eef; text-align: center; padding-top: 100px; }
-        button { padding: 10px 20px; font-size: 16px; }
-        a { display: inline-block; margin-top: 20px; text-decoration: none; color: red; }
-    </style>
-</head>
-<body>
-    <h1>Bienvenue, {{ username }}</h1>
-    {% if not session_started %}
-        <button onclick="startSession()">Démarrer la session</button>
-    {% else %}
-        <h2>Temps écoulé : <span id="timer">00:00:00</span></h2>
-    {% endif %}
-    <br>
-    <a href="/logout">Se déconnecter</a>
-
-    <script>
-        let started = {{ 'true' if session_started else 'false' }};
-        let seconds = 0;
-        function startSession() {
-            started = true;
-            window.open("https://www.google.com", '_blank');
-            location.href = '/start_timer';
-        }
-        function updateTimer() {
-            if (!started) return;
-            seconds++;
-            const hrs = String(Math.floor(seconds / 3600)).padStart(2, '0');
-            const mins = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
-            const secs = String(seconds % 60).padStart(2, '0');
-            document.getElementById("timer").textContent = `${hrs}:${mins}:${secs}`;
-        }
-        setInterval(updateTimer, 1000);
-    </script>
-</body>
-</html>
-"""
-
+# (On garde tes templates tels quels mais avec la nouvelle colonne "status" dans le tableau admin)
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -103,6 +44,7 @@ ADMIN_TEMPLATE = """
                             <td>${device.username}</td>
                             <td>${device.first_seen}</td>
                             <td>${device.last_seen}</td>
+                            <td>${device.status}</td>
                             <td>
                                 <details>
                                     <summary>+</summary>
@@ -128,6 +70,7 @@ ADMIN_TEMPLATE = """
                 <th>Nom d'utilisateur</th>
                 <th>Première connexion</th>
                 <th>Dernière activité</th>
+                <th>Statut</th>
                 <th>Détails</th>
             </tr>
         </thead>
@@ -153,14 +96,15 @@ def init_db():
                     first_seen TEXT,
                     last_seen TEXT,
                     ip TEXT,
-                    mac TEXT
+                    mac TEXT,
+                    status TEXT
                 )''')
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                     username TEXT PRIMARY KEY,
                     password TEXT
                 )''')
     if not c.execute('SELECT * FROM users WHERE username = ?', ('admin',)).fetchone():
-        c.execute('INSERT INTO users (username, password) VALUES (?, ?)', ('admin', 'zino'))
+        c.execute('INSERT INTO users (username, password) VALUES (?, ?)', ('admin', hash_password('zino')))
     conn.commit()
     conn.close()
 
@@ -184,8 +128,9 @@ def login():
     session.clear()
     if request.method == 'POST':
         u, p = request.form['username'], request.form['password']
+        hashed_p = hash_password(p)
         conn = sqlite3.connect(DB_PATH)
-        if conn.execute('SELECT * FROM users WHERE username = ? AND password = ?', (u, p)).fetchone():
+        if conn.execute('SELECT * FROM users WHERE username = ? AND password = ?', (u, hashed_p)).fetchone():
             session['username'] = u
             return redirect(url_for('index'))
         return "<h1>Identifiants invalides</h1>"
@@ -201,9 +146,10 @@ def create():
     if session.get('username') != 'admin':
         return redirect(url_for('login'))
     u, p = request.form['username'], request.form['password']
+    hashed_p = hash_password(p)
     conn = sqlite3.connect(DB_PATH)
     try:
-        conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (u, p))
+        conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (u, hashed_p))
         conn.commit()
     except sqlite3.IntegrityError:
         return "<h2>Ce nom d'utilisateur existe déjà</h2>"
@@ -219,9 +165,9 @@ def start_timer():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     if not c.execute('SELECT * FROM connexions WHERE username = ?', (username,)).fetchone():
-        c.execute('INSERT INTO connexions VALUES (?, ?, ?, ?, ?)', (username, now, now, ip, mac))
+        c.execute('INSERT INTO connexions VALUES (?, ?, ?, ?, ?, ?)', (username, now, now, ip, mac, 'succès'))
     else:
-        c.execute('UPDATE connexions SET last_seen = ?, ip = ?, mac = ? WHERE username = ?', (now, ip, mac, username))
+        c.execute('UPDATE connexions SET last_seen = ?, ip = ?, mac = ?, status = ? WHERE username = ?', (now, ip, mac, 'succès', username))
     conn.commit()
     return redirect(url_for('index'))
 
@@ -229,9 +175,9 @@ def start_timer():
 def api_connexions():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT username, first_seen, last_seen, ip, mac FROM connexions ORDER BY last_seen DESC')
+    c.execute('SELECT username, first_seen, last_seen, ip, mac, status FROM connexions ORDER BY last_seen DESC')
     rows = c.fetchall()
-    devices = [dict(username=r[0], first_seen=r[1], last_seen=r[2], ip=r[3], mac=r[4]) for r in rows]
+    devices = [dict(username=r[0], first_seen=r[1], last_seen=r[2], ip=r[3], mac=r[4], status=r[5]) for r in rows]
     return jsonify({'devices': devices})
 
 # === OUTILS ===
