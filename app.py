@@ -151,12 +151,15 @@ def logout():
         if result:
             first_seen = datetime.datetime.strptime(result[0], "%d/%m/%Y %H:%M")
             total_seconds = int((now - first_seen).total_seconds())
+            c.execute('SELECT first_seen, total_time FROM connexions WHERE username = ?', (username,))
+            result = c.fetchone()
+        if result:
+            first_seen = datetime.datetime.strptime(result[0], "%d/%m/%Y %H:%M")
+            old_total = result[1] or 0
+            new_session = int((now - first_seen).total_seconds())
+            total = old_total + new_session
             c.execute('UPDATE connexions SET last_seen = ?, total_time = ?, status = ? WHERE username = ?',
-                      (last_seen, total_seconds, 'Succès', username))
-            conn.commit()
-        conn.close()
-    session.clear()
-    return redirect(url_for('login'))
+                      (last_seen, total, 'Succès', username))
 
 @app.route('/create', methods=['POST'])
 def create():
