@@ -11,8 +11,51 @@ DB_PATH = 'scan.db'
 
 # === TEMPLATES HTML ===
 
-LOGIN_TEMPLATE = """ ... (PAS DE CHANGEMENT) ... """
-USER_TEMPLATE = """ ... (PAS DE CHANGEMENT) ... """
+LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login</title>
+    <style>
+        body { font-family: Arial; background: linear-gradient(120deg, #89f7fe, #66a6ff); height: 100vh; display: flex; align-items: center; justify-content: center; }
+        form { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 0 15px rgba(0,0,0,0.2); width: 300px; }
+        h1 { text-align: center; margin-bottom: 20px; }
+        input, button { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #ccc; }
+        button { background: #0074D9; color: white; border: none; cursor: pointer; }
+        button:hover { background: #005fa3; }
+    </style>
+</head>
+<body>
+    <form method="POST">
+        <h1>Connexion</h1>
+        <input type="text" name="username" placeholder="Nom d'utilisateur" required>
+        <input type="password" name="password" placeholder="Mot de passe" required>
+        <button type="submit">Se connecter</button>
+    </form>
+</body>
+</html>
+"""
+
+USER_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bienvenue</title>
+    <style>
+        body { font-family: Arial; background-color: #f2f2f2; text-align: center; padding: 100px; }
+        a { display: inline-block; margin-top: 20px; padding: 10px 20px; background: #0074D9; color: white; text-decoration: none; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>Bienvenue, {{ username }} !</h1>
+    {% if not session_started %}
+        <a href="/start_timer">Commencer la session</a>
+    {% else %}
+        <a href="/logout">Se déconnecter</a>
+    {% endif %}
+</body>
+</html>
+"""
 
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
@@ -20,14 +63,17 @@ ADMIN_TEMPLATE = """
 <head>
     <title>Admin</title>
     <style>
-        body { font-family: Arial; background-color: #f2f2f2; padding: 30px; }
+        body { font-family: Arial; background-color: #f8f9fa; padding: 30px; }
         table { border-collapse: collapse; width: 90%; margin: auto; }
-        th, td { border: 1px solid #ccc; padding: 12px; text-align: center; }
+        th, td { border: 1px solid #dee2e6; padding: 12px; text-align: center; }
         th { background-color: #0074D9; color: white; }
         h1, h2 { text-align: center; }
-        form { margin: 20px auto; width: 300px; background: white; padding: 20px; border-radius: 8px; }
-        input { margin: 10px; padding: 8px; width: 90%; }
+        form { margin: 20px auto; width: 300px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        input, button { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #ccc; }
+        button { background: #28a745; color: white; border: none; cursor: pointer; }
+        button:hover { background: #218838; }
         .logout { text-align: center; margin-bottom: 20px; }
+        .details { text-align: left; }
     </style>
     <script>
         function updateDevices() {
@@ -43,25 +89,22 @@ ADMIN_TEMPLATE = """
                             <td>${device.last_seen}</td>
                             <td>${device.status}</td>
                             <td>${device.total_time}</td>
-                            <td>
-                                <details>
-                                    <summary>+</summary>
-                                    <p>IP: ${device.ip}</p>
-                                    <p>MAC: ${device.mac}</p>
-                                </details>
+                            <td class="details">
+                                <p><strong>IP:</strong> ${device.ip}</p>
+                                <p><strong>MAC:</strong> ${device.mac}</p>
                             </td>
                         </tr>`;
                         tbody.innerHTML += row;
                     });
                 });
         }
-        setInterval(updateDevices, 10000);
+        setInterval(updateDevices, 5000);
         window.onload = updateDevices;
     </script>
 </head>
 <body>
     <div class="logout"><a href="/logout">Se déconnecter</a></div>
-    <h1>Admin - Connexions utilisateurs</h1>
+    <h1>Admin - Supervision des utilisateurs</h1>
     <table>
         <thead>
             <tr>
@@ -145,21 +188,19 @@ def logout():
         now = datetime.datetime.now()
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        last_seen = now.strftime("%d/%m/%Y %H:%M")
-        c.execute('SELECT first_seen FROM connexions WHERE username = ?', (username,))
+        c.execute('SELECT first_seen, total_time FROM connexions WHERE username = ?', (username,))
         result = c.fetchone()
         if result:
-            first_seen = datetime.datetime.strptime(result[0], "%d/%m/%Y %H:%M")
-            total_seconds = int((now - first_seen).total_seconds())
-            c.execute('SELECT first_seen, total_time FROM connexions WHERE username = ?', (username,))
-            result = c.fetchone()
-        if result:
-            first_seen = datetime.datetime.strptime(result[0], "%d/%m/%Y %H:%M")
-            old_total = result[1] or 0
-            new_session = int((now - first_seen).total_seconds())
-            total = old_total + new_session
+            first_seen_str, previous_total = result
+            first_seen = datetime.datetime.strptime(first_seen_str, "%d/%m/%Y %H:%M")
+            session_time = int((now - first_seen).total_seconds())
+            total_time = (previous_total or 0) + session_time
             c.execute('UPDATE connexions SET last_seen = ?, total_time = ?, status = ? WHERE username = ?',
-                      (last_seen, total, 'Succès', username))
+                      (now.strftime("%d/%m/%Y %H:%M"), total_time, 'Succès', username))
+            conn.commit()
+        conn.close()
+    session.clear()
+    return redirect(url_for('login'))
 
 @app.route('/create', methods=['POST'])
 def create():
@@ -199,11 +240,8 @@ def api_connexions():
     devices = []
     for r in rows:
         total_time = r[4]
-        if total_time:
-            total_time = str(datetime.timedelta(seconds=total_time))
-        else:
-            total_time = "En cours"
-        devices.append(dict(username=r[0], first_seen=r[1], last_seen=r[2], status=r[3], total_time=total_time, ip=r[5], mac=r[6]))
+        total_time_str = str(datetime.timedelta(seconds=total_time)) if total_time else "En cours"
+        devices.append(dict(username=r[0], first_seen=r[1], last_seen=r[2], status=r[3], total_time=total_time_str, ip=r[5], mac=r[6]))
     return jsonify({'devices': devices})
 
 # === OUTILS ===
