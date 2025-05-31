@@ -9,14 +9,11 @@ app = Flask(__name__)
 app.secret_key = "supersecretkey"
 DB_PATH = 'scan.db'
 
-# === HASHAGE DES MOTS DE PASSE ===
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
 # === TEMPLATES HTML ===
 
-# (On garde tes templates tels quels mais avec la nouvelle colonne "status" dans le tableau admin)
+LOGIN_TEMPLATE = """ ... (PAS DE CHANGEMENT) ... """
+USER_TEMPLATE = """ ... (PAS DE CHANGEMENT) ... """
+
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -45,6 +42,7 @@ ADMIN_TEMPLATE = """
                             <td>${device.first_seen}</td>
                             <td>${device.last_seen}</td>
                             <td>${device.status}</td>
+                            <td>${device.total_time}</td>
                             <td>
                                 <details>
                                     <summary>+</summary>
@@ -71,6 +69,7 @@ ADMIN_TEMPLATE = """
                 <th>Première connexion</th>
                 <th>Dernière activité</th>
                 <th>Statut</th>
+                <th>Temps total</th>
                 <th>Détails</th>
             </tr>
         </thead>
@@ -88,6 +87,9 @@ ADMIN_TEMPLATE = """
 
 # === BASE DE DONNÉES ===
 
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -97,7 +99,8 @@ def init_db():
                     last_seen TEXT,
                     ip TEXT,
                     mac TEXT,
-                    status TEXT
+                    status TEXT,
+                    total_time INTEGER
                 )''')
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                     username TEXT PRIMARY KEY,
@@ -127,10 +130,9 @@ def index():
 def login():
     session.clear()
     if request.method == 'POST':
-        u, p = request.form['username'], request.form['password']
-        hashed_p = hash_password(p)
+        u, p = request.form['username'], hash_password(request.form['password'])
         conn = sqlite3.connect(DB_PATH)
-        if conn.execute('SELECT * FROM users WHERE username = ? AND password = ?', (u, hashed_p)).fetchone():
+        if conn.execute('SELECT * FROM users WHERE username = ? AND password = ?', (u, p)).fetchone():
             session['username'] = u
             return redirect(url_for('index'))
         return "<h1>Identifiants invalides</h1>"
@@ -138,6 +140,21 @@ def login():
 
 @app.route('/logout')
 def logout():
+    username = session.get('username')
+    if username and username != 'admin':
+        now = datetime.datetime.now()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        last_seen = now.strftime("%d/%m/%Y %H:%M")
+        c.execute('SELECT first_seen FROM connexions WHERE username = ?', (username,))
+        result = c.fetchone()
+        if result:
+            first_seen = datetime.datetime.strptime(result[0], "%d/%m/%Y %H:%M")
+            total_seconds = int((now - first_seen).total_seconds())
+            c.execute('UPDATE connexions SET last_seen = ?, total_time = ?, status = ? WHERE username = ?',
+                      (last_seen, total_seconds, 'Succès', username))
+            conn.commit()
+        conn.close()
     session.clear()
     return redirect(url_for('login'))
 
@@ -145,11 +162,10 @@ def logout():
 def create():
     if session.get('username') != 'admin':
         return redirect(url_for('login'))
-    u, p = request.form['username'], request.form['password']
-    hashed_p = hash_password(p)
+    u, p = request.form['username'], hash_password(request.form['password'])
     conn = sqlite3.connect(DB_PATH)
     try:
-        conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (u, hashed_p))
+        conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (u, p))
         conn.commit()
     except sqlite3.IntegrityError:
         return "<h2>Ce nom d'utilisateur existe déjà</h2>"
@@ -165,9 +181,9 @@ def start_timer():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     if not c.execute('SELECT * FROM connexions WHERE username = ?', (username,)).fetchone():
-        c.execute('INSERT INTO connexions VALUES (?, ?, ?, ?, ?, ?)', (username, now, now, ip, mac, 'succès'))
+        c.execute('INSERT INTO connexions VALUES (?, ?, ?, ?, ?, ?, ?)', (username, now, now, ip, mac, 'En cours', 0))
     else:
-        c.execute('UPDATE connexions SET last_seen = ?, ip = ?, mac = ?, status = ? WHERE username = ?', (now, ip, mac, 'succès', username))
+        c.execute('UPDATE connexions SET last_seen = ?, ip = ?, mac = ?, status = ? WHERE username = ?', (now, ip, mac, 'En cours', username))
     conn.commit()
     return redirect(url_for('index'))
 
@@ -175,9 +191,16 @@ def start_timer():
 def api_connexions():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT username, first_seen, last_seen, ip, mac, status FROM connexions ORDER BY last_seen DESC')
+    c.execute('SELECT username, first_seen, last_seen, status, total_time, ip, mac FROM connexions ORDER BY last_seen DESC')
     rows = c.fetchall()
-    devices = [dict(username=r[0], first_seen=r[1], last_seen=r[2], ip=r[3], mac=r[4], status=r[5]) for r in rows]
+    devices = []
+    for r in rows:
+        total_time = r[4]
+        if total_time:
+            total_time = str(datetime.timedelta(seconds=total_time))
+        else:
+            total_time = "En cours"
+        devices.append(dict(username=r[0], first_seen=r[1], last_seen=r[2], status=r[3], total_time=total_time, ip=r[5], mac=r[6]))
     return jsonify({'devices': devices})
 
 # === OUTILS ===
