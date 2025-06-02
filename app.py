@@ -49,10 +49,19 @@ USER_TEMPLATE = """
 <body>
     <h1>Bienvenue, {{ username }} !</h1>
     {% if not session_started %}
-        <a href="/start_timer">Commencer la session</a>
+        <form method="POST" action="/start_timer" onsubmit="openGoogle()">
+             <button type="submit">Commencer la session</button>
+        </form>
     {% else %}
         <a href="/logout">Se déconnecter</a>
     {% endif %}
+
+    <script>
+    function openGoogle() {
+        window.open("https://www.google.com", "_blank");
+    }
+    </script>
+
 </body>
 </html>
 """
