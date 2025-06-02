@@ -49,19 +49,10 @@ USER_TEMPLATE = """
 <body>
     <h1>Bienvenue, {{ username }} !</h1>
     {% if not session_started %}
-        <form method="POST" action="/start_timer" onsubmit="openGoogle()">
-             <button type="submit">Commencer la session</button>
-        </form>
+        <a href="/start_timer">Commencer la session</a>
     {% else %}
         <a href="/logout">Se déconnecter</a>
     {% endif %}
-
-    <script>
-    function openGoogle() {
-        window.open("https://www.google.com", "_blank");
-    }
-    </script>
-
 </body>
 </html>
 """
@@ -236,7 +227,8 @@ def start_timer():
     if not c.execute('SELECT * FROM connexions WHERE username = ?', (username,)).fetchone():
         c.execute('INSERT INTO connexions VALUES (?, ?, ?, ?, ?, ?, ?)', (username, now, now, ip, mac, 'En cours', 0))
     else:
-        c.execute('UPDATE connexions SET last_seen = ?, ip = ?, mac = ?, status = ? WHERE username = ?', (now, ip, mac, 'En cours', username))
+        c.execute('UPDATE connexions SET last_seen = ?, ip = ?, mac = ?, status = ? WHERE username = ?',
+                  (now, ip, mac, 'En cours', username))
     conn.commit()
     return redirect(url_for('index'))
 
@@ -250,7 +242,15 @@ def api_connexions():
     for r in rows:
         total_time = r[4]
         total_time_str = str(datetime.timedelta(seconds=total_time)) if total_time else "En cours"
-        devices.append(dict(username=r[0], first_seen=r[1], last_seen=r[2], status=r[3], total_time=total_time_str, ip=r[5], mac=r[6]))
+        devices.append(dict(
+            username=r[0],
+            first_seen=r[1],
+            last_seen=r[2],
+            status=r[3],
+            total_time=total_time_str,
+            ip=r[5],
+            mac=r[6]
+        ))
     return jsonify({'devices': devices})
 
 # === OUTILS ===
